@@ -1,9 +1,11 @@
 pub mod color;
 pub mod font;
+pub mod frame;
 pub mod hyphenation;
 pub mod length;
 pub mod linebreak;
 pub mod measurement;
 pub mod node;
+pub mod pagebuilder;
 pub mod shaper;
 pub mod svg;
