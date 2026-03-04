@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 ttf-parser = "0.25"
 fontdb = "0.22"
+rustybuzz = "0.20"
