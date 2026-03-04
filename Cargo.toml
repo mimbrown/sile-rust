@@ -1,0 +1,3 @@
+[workspace]
+members = ["sile-cli", "sile-core"]
+resolver = "3"
