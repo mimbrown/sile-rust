@@ -453,7 +453,15 @@ impl PdfOutputter {
                                     cursor_x += nnode.width.to_pt().unwrap_or(0.0);
                                 }
                                 Node::Glue(g) | Node::HFillGlue(g) | Node::HssGlue(g) => {
-                                    cursor_x += g.width.to_pt().unwrap_or(0.0);
+                                    let natural = g.width.length.to_pt().unwrap_or(0.0);
+                                    let scaled = if vbox.ratio > 0.0 {
+                                        natural + g.width.stretch.to_pt().unwrap_or(0.0) * vbox.ratio
+                                    } else if vbox.ratio < 0.0 {
+                                        natural + g.width.shrink.to_pt().unwrap_or(0.0) * vbox.ratio
+                                    } else {
+                                        natural
+                                    };
+                                    cursor_x += scaled.max(0.0);
                                 }
                                 Node::Kern(k) => {
                                     cursor_x += k.width.to_pt().unwrap_or(0.0);
@@ -1248,6 +1256,7 @@ mod tests {
             height: Length::pt(12.0),
             depth: Length::pt(3.0),
             nodes: vec![Node::hbox(300.0, 12.0, 3.0)],
+            ratio: 0.0,
             misfit: false,
             explicit: false,
         };
@@ -1300,6 +1309,7 @@ mod tests {
             height: Length::pt(12.0),
             depth: Length::pt(3.0),
             nodes: vec![Node::NNode(nnode)],
+            ratio: 0.0,
             misfit: false,
             explicit: false,
         };
@@ -1356,6 +1366,7 @@ mod tests {
             height: Length::pt(12.0),
             depth: Length::pt(3.0),
             nodes: vec![Node::NNode(nnode)],
+            ratio: 0.0,
             misfit: false,
             explicit: false,
         };
@@ -1420,6 +1431,7 @@ mod tests {
                 height: Length::pt(14.0),
                 depth: Length::pt(3.0),
                 nodes: vec![Node::NNode(nnode)],
+                ratio: 0.0,
                 misfit: false,
                 explicit: false,
             };

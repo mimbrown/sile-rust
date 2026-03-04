@@ -1,4 +1,4 @@
-use sile_core::builder::DocumentBuilder;
+use sile_core::builder::{DocumentBuilder, TextAlign};
 use sile_core::color::Color;
 use sile_core::font::{Direction, FontSpec, FontWeight};
 use sile_core::frame::PaperSize;
@@ -120,6 +120,77 @@ fn main() {
          successfully for the reigning family of Holland.",
     );
     doc.new_paragraph().expect("paragraph 5");
+
+    // --- Alignment examples ---
+
+    doc.add_vskip(18.0);
+
+    let demo_text = "The art of typesetting lies in the invisible details — the \
+         spacing between words, the rhythm of line breaks, and the way a paragraph \
+         sits on the page. Good typography is felt, not seen. A well-set page \
+         draws the reader in without calling attention to itself, while a poorly \
+         set one creates a subtle unease that disrupts the reading experience. \
+         From Gutenberg to the present day, compositors have laboured over these \
+         quiet refinements, adjusting the fit of each line so that the texture of \
+         the text block remains even and undisturbed from margin to margin.";
+
+    // Justified (default)
+    doc.set_font("heading");
+    doc.set_alignment(TextAlign::Left);
+    doc.set_paragraph_indent(0.0);
+    doc.add_text("Justified");
+    doc.new_paragraph().expect("alignment heading 1");
+    doc.add_vskip(4.0);
+
+    doc.set_font("body");
+    doc.set_paragraph_indent(20.0);
+    doc.set_alignment(TextAlign::Justify);
+    doc.add_text(demo_text);
+    doc.new_paragraph().expect("justified paragraph");
+
+    // Left-aligned
+    doc.set_font("heading");
+    doc.set_alignment(TextAlign::Left);
+    doc.set_paragraph_indent(0.0);
+    doc.add_text("Left-aligned");
+    doc.new_paragraph().expect("alignment heading 2");
+    doc.add_vskip(4.0);
+
+    doc.set_font("body");
+    doc.set_paragraph_indent(20.0);
+    doc.set_alignment(TextAlign::Left);
+    doc.add_text(demo_text);
+    doc.new_paragraph().expect("left-aligned paragraph");
+
+    // Right-aligned
+    doc.set_font("heading");
+    doc.set_alignment(TextAlign::Left);
+    doc.set_paragraph_indent(0.0);
+    doc.add_text("Right-aligned");
+    doc.new_paragraph().expect("alignment heading 3");
+    doc.add_vskip(4.0);
+
+    doc.set_font("body");
+    doc.set_paragraph_indent(0.0);
+    doc.set_alignment(TextAlign::Right);
+    doc.add_text(demo_text);
+    doc.new_paragraph().expect("right-aligned paragraph");
+
+    // Centered
+    doc.set_font("heading");
+    doc.set_alignment(TextAlign::Left);
+    doc.set_paragraph_indent(0.0);
+    doc.add_text("Centered");
+    doc.new_paragraph().expect("alignment heading 4");
+    doc.add_vskip(4.0);
+
+    doc.set_font("body");
+    doc.set_alignment(TextAlign::Center);
+    doc.add_text(demo_text);
+    doc.new_paragraph().expect("centered paragraph");
+
+    // Reset for the following Urdu section
+    doc.set_alignment(TextAlign::Justify);
 
     // --- Urdu section (Graphite via Awami Nastaliq) ---
 

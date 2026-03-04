@@ -14,6 +14,19 @@ use crate::pdf::{Bookmark, PdfConfig, PdfError, PdfOutputter};
 use crate::shaper::{self, GlyphItem, Shaper, SpaceSettings};
 
 // ---------------------------------------------------------------------------
+// TextAlign
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextAlign {
+    Left,
+    Center,
+    Right,
+    #[default]
+    Justify,
+}
+
+// ---------------------------------------------------------------------------
 // Error
 // ---------------------------------------------------------------------------
 
@@ -94,6 +107,7 @@ pub struct DocumentBuilder {
     // Style state
     current_color: Option<Color>,
     direction: Direction,
+    alignment: TextAlign,
 
     // Paragraph state
     paragraph_runs: Vec<TextRun>,
@@ -132,6 +146,7 @@ impl DocumentBuilder {
             language: "en".to_string(),
             current_color: None,
             direction: Direction::LTR,
+            alignment: TextAlign::Justify,
             paragraph_runs: Vec::new(),
             paragraph_indent: 20.0,
             paragraph_skip: 0.0,
@@ -267,6 +282,11 @@ impl DocumentBuilder {
         self
     }
 
+    pub fn set_alignment(&mut self, alignment: TextAlign) -> &mut Self {
+        self.alignment = alignment;
+        self
+    }
+
     pub fn set_space_settings(&mut self, settings: SpaceSettings) -> &mut Self {
         self.space_settings = settings;
         self
@@ -335,6 +355,7 @@ impl DocumentBuilder {
             height: Length::pt(height),
             depth: Length::zero(),
             nodes: vec![Node::hbox(width, height, 0.0)],
+            ratio: 0.0,
             misfit: false,
             explicit: false,
         };
@@ -554,11 +575,21 @@ impl DocumentBuilder {
             &self.fonts,
         );
 
-        // Run line breaker (no callback — nodes are already hyphenated)
+        // For ragged (non-justify) modes, add infinite stretch to right_skip
+        // so the linebreaker allows short lines instead of forcing tight fits.
+        let mut lb_settings = self.linebreak_settings.clone();
+        if self.alignment != TextAlign::Justify {
+            lb_settings.right_skip = Length::new(
+                Measurement::pt(0.0),
+                Measurement::pt(1e13),
+                Measurement::pt(0.0),
+            );
+        }
+
         let breaks = linebreak::do_break(
             &h_nodes,
             hsize,
-            &self.linebreak_settings,
+            &lb_settings,
             None,
         );
 
@@ -650,16 +681,64 @@ impl DocumentBuilder {
             }
 
             // For RTL paragraphs, reverse node order so the first word
-            // in logical order appears at the right edge, then right-align
-            // by prepending padding for the remaining space.
+            // in logical order appears at the right edge.
             if direction == Direction::RTL {
                 line_nodes.reverse();
+            }
+
+            // Compute alignment ratio and padding.
+            // For Justify, the ratio comes from the linebreaker and the PDF
+            // renderer scales glue stretch/shrink accordingly.
+            // For ragged modes, ratio is 0 and we insert padding hboxes.
+            let line_ratio = match self.alignment {
+                TextAlign::Justify => br.ratio.max(-1.0),
+                _ => 0.0,
+            };
+
+            // For non-justify modes, compute slack and insert padding
+            if self.alignment != TextAlign::Justify {
+                let content_width: f64 = line_nodes
+                    .iter()
+                    .map(|n| n.width().length.to_pt().unwrap_or(0.0))
+                    .sum();
+                let slack = (hsize - content_width).max(0.0);
+
+                // For RTL: Left=right-aligned, Right=left-aligned
+                let effective_align = if direction == Direction::RTL {
+                    match self.alignment {
+                        TextAlign::Left => TextAlign::Right,
+                        TextAlign::Right => TextAlign::Left,
+                        other => other,
+                    }
+                } else {
+                    self.alignment
+                };
+
+                match effective_align {
+                    TextAlign::Right => {
+                        if slack > 0.5 {
+                            line_nodes.insert(0, Node::hbox(slack, 0.0, 0.0));
+                        }
+                    }
+                    TextAlign::Center => {
+                        let half = slack / 2.0;
+                        if half > 0.5 {
+                            line_nodes.insert(0, Node::hbox(half, 0.0, 0.0));
+                        }
+                    }
+                    _ => {} // Left: no padding needed
+                }
+            } else if direction == Direction::RTL {
+                // Justify + RTL: still need right-alignment for the last line
+                // (which has parfillskip absorbing slack). The ratio handles
+                // full lines; for short lines ratio is large but capped, so
+                // we pad them instead.
                 let content_width: f64 = line_nodes
                     .iter()
                     .map(|n| n.width().length.to_pt().unwrap_or(0.0))
                     .sum();
                 let slack = hsize - content_width;
-                if slack > 0.5 {
+                if slack > 0.5 && line_ratio.abs() > 1.0 {
                     line_nodes.insert(0, Node::hbox(slack, 0.0, 0.0));
                 }
             }
@@ -673,6 +752,7 @@ impl DocumentBuilder {
                 height: line_height,
                 depth: line_depth,
                 nodes: line_nodes,
+                ratio: line_ratio,
                 misfit: false,
                 explicit: false,
             };

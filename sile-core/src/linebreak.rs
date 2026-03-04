@@ -96,6 +96,7 @@ pub struct BreakResult {
     pub width: f64,
     pub left: f64,
     pub right: f64,
+    pub ratio: f64,
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +139,7 @@ struct BestInClass {
     minimal_demerits: i64,
     node: usize,
     line: i32,
+    ratio: f64,
 }
 
 impl Default for BestInClass {
@@ -146,6 +148,7 @@ impl Default for BestInClass {
             minimal_demerits: AWFUL_BAD,
             node: NONE,
             line: 0,
+            ratio: 0.0,
         }
     }
 }
@@ -627,6 +630,7 @@ impl<'a> LineBreaker<'a> {
                 minimal_demerits: total,
                 node: if r_serial > 0 { self.r } else { NONE },
                 line: self.active(self.r).line_number,
+                ratio: self.last_ratio,
             };
             if total < self.minimum_demerits {
                 self.minimum_demerits = total;
@@ -696,7 +700,7 @@ impl<'a> LineBreaker<'a> {
                     cur_break: self.place,
                     prev_break: best.node,
                     serial: self.serial,
-                    ratio: self.last_ratio,
+                    ratio: best.ratio,
                     line_number: best.line + 1,
                     fitness: class,
                     total_demerits: best.minimal_demerits,
@@ -816,6 +820,7 @@ impl<'a> LineBreaker<'a> {
                 width: self.hsize,
                 left,
                 right,
+                ratio: self.active(p).ratio,
             });
 
             let pb = self.active(p).prev_break;

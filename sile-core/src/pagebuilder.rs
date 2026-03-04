@@ -481,6 +481,7 @@ mod tests {
             height: Length::pt(height),
             depth: Length::pt(depth),
             nodes: vec![Node::hbox(300.0, height, depth)],
+            ratio: 0.0,
             misfit: false,
             explicit: false,
         })
