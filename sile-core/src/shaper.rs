@@ -140,17 +140,15 @@ impl Shaper for RustyBuzzShaper {
             Direction::TTB => rustybuzz::Direction::TopToBottom,
         });
 
-        if !spec.script.is_empty() {
-            if let Ok(script) = spec.script.parse::<rustybuzz::Script>() {
+        if !spec.script.is_empty()
+            && let Ok(script) = spec.script.parse::<rustybuzz::Script>() {
                 buffer.set_script(script);
             }
-        }
 
-        if !spec.language.is_empty() {
-            if let Ok(lang) = spec.language.parse::<rustybuzz::Language>() {
+        if !spec.language.is_empty()
+            && let Ok(lang) = spec.language.parse::<rustybuzz::Language>() {
                 buffer.set_language(lang);
             }
-        }
 
         let features = parse_features(&spec.features);
         let glyph_buffer = rustybuzz::shape(&rb_face, &features, buffer);

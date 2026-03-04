@@ -1,6 +1,8 @@
 pub mod color;
 pub mod font;
+pub mod hyphenation;
 pub mod length;
+pub mod linebreak;
 pub mod measurement;
 pub mod node;
 pub mod shaper;

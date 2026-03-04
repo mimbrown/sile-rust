@@ -129,9 +129,9 @@ pub fn render_glyphs_to_svg_with_fallbacks(
         };
 
         if let Some(path_data) = outlined {
-            let _ = write!(
+            let _ = writeln!(
                 paths,
-                "  <path d=\"{}\" fill=\"black\"/>\n",
+                "  <path d=\"{}\" fill=\"black\"/>",
                 path_data
             );
         }
@@ -143,9 +143,9 @@ pub fn render_glyphs_to_svg_with_fallbacks(
     let height = baseline_y + max_below + margin;
 
     // Baseline guide
-    let _ = write!(
+    let _ = writeln!(
         paths,
-        "  <line x1=\"{}\" y1=\"{:.1}\" x2=\"{:.1}\" y2=\"{:.1}\" stroke=\"#ccc\" stroke-width=\"0.5\"/>\n",
+        "  <line x1=\"{}\" y1=\"{:.1}\" x2=\"{:.1}\" y2=\"{:.1}\" stroke=\"#ccc\" stroke-width=\"0.5\"/>",
         margin, baseline_y, width - margin, baseline_y
     );
 

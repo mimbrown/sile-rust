@@ -119,11 +119,10 @@ impl Color {
         }
 
         // Single number → grayscale (0–255)
-        if tokens.len() == 1 {
-            if let Ok(l) = tokens[0].parse::<f64>() {
+        if tokens.len() == 1
+            && let Ok(l) = tokens[0].parse::<f64>() {
                 return Ok(Color::Grayscale { l: l / 255.0 });
             }
-        }
 
         Err(format!("Unparsable color {input}"))
     }

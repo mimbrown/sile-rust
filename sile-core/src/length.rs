@@ -152,6 +152,18 @@ impl std::ops::Sub for Length {
     }
 }
 
+impl std::ops::AddAssign for Length {
+    fn add_assign(&mut self, other: Self) {
+        *self = *self + other;
+    }
+}
+
+impl std::ops::SubAssign for Length {
+    fn sub_assign(&mut self, other: Self) {
+        *self = *self - other;
+    }
+}
+
 impl std::ops::Mul<f64> for Length {
     type Output = Self;
     fn mul(self, scalar: f64) -> Self {

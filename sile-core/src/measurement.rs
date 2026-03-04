@@ -267,6 +267,18 @@ impl std::ops::Sub for Measurement {
     }
 }
 
+impl std::ops::AddAssign for Measurement {
+    fn add_assign(&mut self, other: Self) {
+        *self = *self + other;
+    }
+}
+
+impl std::ops::SubAssign for Measurement {
+    fn sub_assign(&mut self, other: Self) {
+        *self = *self - other;
+    }
+}
+
 impl std::ops::Mul<f64> for Measurement {
     type Output = Self;
     fn mul(self, scalar: f64) -> Self {

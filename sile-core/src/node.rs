@@ -184,12 +184,17 @@ impl Node {
     }
 
     pub fn is_discardable(&self) -> bool {
-        match self {
-            Node::Glue(_) | Node::HFillGlue(_) | Node::HssGlue(_) => true,
-            Node::VGlue(_) | Node::VFillGlue(_) | Node::VssGlue(_) | Node::ZeroVGlue(_) => true,
-            Node::Penalty(_) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Node::Glue(_)
+                | Node::HFillGlue(_)
+                | Node::HssGlue(_)
+                | Node::VGlue(_)
+                | Node::VFillGlue(_)
+                | Node::VssGlue(_)
+                | Node::ZeroVGlue(_)
+                | Node::Penalty(_)
+        )
     }
 
     pub fn is_explicit(&self) -> bool {
@@ -704,7 +709,7 @@ impl VBox {
         self.height = self.height.absolute();
         // Add current depth to height
         let cur_depth = self.depth;
-        self.height = self.height + cur_depth.absolute();
+        self.height += cur_depth.absolute();
 
         let mut last_depth = Length::zero();
         for n in nodes_to_add {
@@ -717,7 +722,7 @@ impl VBox {
             self.height = self.height + h + d;
             self.nodes.push(n);
         }
-        self.height = self.height - last_depth;
+        self.height -= last_depth;
         self.depth = last_depth;
     }
 
