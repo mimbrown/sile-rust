@@ -1,3 +1,5 @@
+use unicode_bidi::{BidiInfo, Level};
+
 use crate::font::{Direction, FontFace, FontSpec};
 use crate::length::Length;
 use crate::measurement::Measurement;
@@ -18,6 +20,9 @@ pub struct GlyphItem {
     pub y_offset: f64,
     pub x_advance: f64,
     pub y_advance: f64,
+    /// Which font this glyph belongs to: 0 = primary, 1+ = fallback index + 1.
+    /// Set by `apply_fallbacks`; renderers use this to pick the correct face.
+    pub font_index: u16,
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +181,7 @@ impl Shaper for RustyBuzzShaper {
                 y_offset: positions[i].y_offset as f64 * scale,
                 x_advance: positions[i].x_advance as f64 * scale,
                 y_advance: positions[i].y_advance as f64 * scale,
+                font_index: 0,
             });
         }
 
@@ -237,22 +243,18 @@ pub fn apply_tracking(items: &mut [GlyphItem], factor: f64) {
     }
 }
 
-/// Shape text with font fallback. Tries the primary face first; any glyphs
-/// with gid=0 are re-shaped with each fallback face in order.
-pub fn shape_with_fallbacks(
+/// Re-shape any gid=0 glyphs using fallback fonts. Works on any shaped
+/// output (plain, bidi, etc.). Modifies items in place.
+pub fn apply_fallbacks(
     shaper: &dyn Shaper,
-    text: &str,
-    primary_face: &FontFace,
-    primary_spec: &FontSpec,
-    fallbacks: &[(FontFace, FontSpec)],
-) -> Vec<GlyphItem> {
-    let mut items = shaper.shape(text, primary_face, primary_spec);
-
+    items: &mut [GlyphItem],
+    fallbacks: &[(&FontFace, &FontSpec)],
+) {
     if fallbacks.is_empty() || items.iter().all(|g| g.gid != 0) {
-        return items;
+        return;
     }
 
-    for (fb_face, fb_spec) in fallbacks {
+    for (fb_idx, &(fb_face, fb_spec)) in fallbacks.iter().enumerate() {
         let mut all_resolved = true;
         for item in items.iter_mut() {
             if item.gid != 0 {
@@ -262,6 +264,7 @@ pub fn shape_with_fallbacks(
             if let Some(fb) = fb_items.first() {
                 if fb.gid != 0 {
                     *item = fb.clone();
+                    item.font_index = (fb_idx + 1) as u16;
                 } else {
                     all_resolved = false;
                 }
@@ -270,6 +273,89 @@ pub fn shape_with_fallbacks(
         if all_resolved {
             break;
         }
+    }
+}
+
+/// Shape text with font fallback. Tries the primary face first; any glyphs
+/// with gid=0 are re-shaped with each fallback face in order.
+pub fn shape_with_fallbacks(
+    shaper: &dyn Shaper,
+    text: &str,
+    primary_face: &FontFace,
+    primary_spec: &FontSpec,
+    fallbacks: &[(&FontFace, &FontSpec)],
+) -> Vec<GlyphItem> {
+    let mut items = shaper.shape(text, primary_face, primary_spec);
+    apply_fallbacks(shaper, &mut items, fallbacks);
+    items
+}
+
+// ---------------------------------------------------------------------------
+// Bidi run splitting
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct BidiRun {
+    pub text: String,
+    pub direction: Direction,
+    pub level: u8,
+}
+
+/// Split text into bidi runs in visual display order using the Unicode
+/// Bidirectional Algorithm (UAX #9). Each run has a consistent direction.
+pub fn split_bidi_runs(text: &str, default_direction: Option<Direction>) -> Vec<BidiRun> {
+    if text.is_empty() {
+        return vec![];
+    }
+
+    let default_level = default_direction.map(|d| match d {
+        Direction::RTL => Level::rtl(),
+        _ => Level::ltr(),
+    });
+
+    let bidi_info = BidiInfo::new(text, default_level);
+    let mut runs = Vec::new();
+
+    for para in &bidi_info.paragraphs {
+        let line = para.range.clone();
+        let (_levels, visual_runs) = bidi_info.visual_runs(para, line);
+
+        for run_range in visual_runs {
+            let run_text = &text[run_range.clone()];
+            let level = bidi_info.levels[run_range.start];
+            runs.push(BidiRun {
+                text: run_text.to_string(),
+                direction: if level.is_rtl() { Direction::RTL } else { Direction::LTR },
+                level: level.number(),
+            });
+        }
+    }
+
+    runs
+}
+
+/// Shape text with bidi support. Splits the input into directional runs
+/// using the Unicode BiDi Algorithm, shapes each run with the correct
+/// direction, and returns glyphs in visual display order.
+pub fn shape_bidi(
+    shaper: &dyn Shaper,
+    text: &str,
+    face: &FontFace,
+    spec: &FontSpec,
+    default_direction: Option<Direction>,
+) -> Vec<GlyphItem> {
+    let runs = split_bidi_runs(text, default_direction);
+
+    if runs.len() == 1 && runs[0].direction == spec.direction {
+        return shaper.shape(text, face, spec);
+    }
+
+    let mut items = Vec::new();
+    for run in &runs {
+        let mut run_spec = spec.clone();
+        run_spec.direction = run.direction;
+        let run_items = shaper.shape(&run.text, face, &run_spec);
+        items.extend(run_items);
     }
 
     items
@@ -501,6 +587,92 @@ mod tests {
         };
         let shaper = RustyBuzzShaper::new();
         let items = shaper.shape("", &face, &spec);
+        assert!(items.is_empty());
+    }
+
+    // -- Bidi run splitting ---------------------------------------------------
+
+    #[test]
+    fn split_bidi_empty() {
+        let runs = split_bidi_runs("", None);
+        assert!(runs.is_empty());
+    }
+
+    #[test]
+    fn split_bidi_pure_ltr() {
+        let runs = split_bidi_runs("Hello World", Some(Direction::LTR));
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].direction, Direction::LTR);
+        assert_eq!(runs[0].text, "Hello World");
+    }
+
+    #[test]
+    fn split_bidi_pure_rtl() {
+        // Hebrew: שלום
+        let runs = split_bidi_runs("\u{05E9}\u{05DC}\u{05D5}\u{05DD}", Some(Direction::RTL));
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].direction, Direction::RTL);
+    }
+
+    #[test]
+    fn split_bidi_mixed_produces_multiple_runs() {
+        // "Hello שלום World" — Latin, Hebrew, Latin
+        let text = "Hello \u{05E9}\u{05DC}\u{05D5}\u{05DD} World";
+        let runs = split_bidi_runs(text, Some(Direction::LTR));
+        assert!(runs.len() >= 2, "mixed text should produce multiple runs");
+        assert!(runs.iter().any(|r| r.direction == Direction::RTL));
+        assert!(runs.iter().any(|r| r.direction == Direction::LTR));
+    }
+
+    #[test]
+    fn split_bidi_auto_detect_rtl_paragraph() {
+        // Start with Hebrew — auto-detect should pick RTL paragraph level
+        let text = "\u{05E9}\u{05DC}\u{05D5}\u{05DD} Hello";
+        let runs = split_bidi_runs(text, None);
+        assert!(!runs.is_empty());
+        // First strong char is Hebrew, so paragraph level should be RTL
+        assert!(runs.iter().any(|r| r.direction == Direction::RTL));
+    }
+
+    // -- shape_bidi -----------------------------------------------------------
+
+    #[test]
+    fn shape_bidi_pure_ltr() {
+        let (face, spec) = match load_system_font_and_spec() {
+            Some(v) => v,
+            None => return,
+        };
+        let shaper = RustyBuzzShaper::new();
+        let items = shape_bidi(&shaper, "Hello", &face, &spec, Some(Direction::LTR));
+        assert_eq!(items.len(), 5);
+        for item in &items {
+            assert!(item.width > 0.0);
+        }
+    }
+
+    #[test]
+    fn shape_bidi_mixed_text() {
+        let (face, spec) = match load_system_font_and_spec() {
+            Some(v) => v,
+            None => return,
+        };
+        let shaper = RustyBuzzShaper::new();
+        let text = "Hello \u{05E9}\u{05DC}\u{05D5}\u{05DD} World";
+        let items = shape_bidi(&shaper, text, &face, &spec, Some(Direction::LTR));
+        assert!(!items.is_empty());
+        for item in &items {
+            assert!(item.width > 0.0 || item.gid == 0, "each glyph should have width or be missing");
+        }
+    }
+
+    #[test]
+    fn shape_bidi_empty() {
+        let (face, spec) = match load_system_font_and_spec() {
+            Some(v) => v,
+            None => return,
+        };
+        let shaper = RustyBuzzShaper::new();
+        let items = shape_bidi(&shaper, "", &face, &spec, None);
         assert!(items.is_empty());
     }
 }

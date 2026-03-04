@@ -4,3 +4,4 @@ pub mod length;
 pub mod measurement;
 pub mod node;
 pub mod shaper;
+pub mod svg;
