@@ -3,6 +3,10 @@ name = "sile-core"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+wasm = []
+
 [dependencies]
 ttf-parser = "0.25"
 fontdb = "0.22"
@@ -14,3 +18,4 @@ pdf-writer = "0.12"
 subsetter = "0.2"
 miniz_oxide = "0.8"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+harfbuzz-sys = { version = "0.6", features = ["bundled"] }

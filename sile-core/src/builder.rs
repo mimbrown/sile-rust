@@ -11,7 +11,7 @@ use crate::measurement::Measurement;
 use crate::node::{self, GlyphData, NNode, Node, VBox};
 use crate::pagebuilder::{PageBreakSettings, PageBuilder};
 use crate::pdf::{Bookmark, PdfConfig, PdfError, PdfOutputter};
-use crate::shaper::{GlyphItem, RustyBuzzShaper, Shaper, SpaceSettings};
+use crate::shaper::{self, GlyphItem, Shaper, SpaceSettings};
 
 // ---------------------------------------------------------------------------
 // Error
@@ -84,7 +84,7 @@ pub struct DocumentBuilder {
     // Font system
     font_db: FontDatabase,
     fonts: std::collections::HashMap<String, RegisteredFont>,
-    shaper: RustyBuzzShaper,
+    shaper: Box<dyn Shaper>,
     current_font: Option<String>,
 
     // Hyphenation
@@ -125,7 +125,7 @@ impl DocumentBuilder {
             frame_gap: 0.0,
             font_db: FontDatabase::new(),
             fonts: std::collections::HashMap::new(),
-            shaper: RustyBuzzShaper::new(),
+            shaper: shaper::default_shaper(),
             current_font: None,
             hyphenation: HyphenationDictionary::new(),
             language: "en".to_string(),
@@ -505,11 +505,12 @@ impl DocumentBuilder {
         // linebreaking and line building. The linebreaker's internal hyphenation
         // pass modifies its own copy of the node list, making break positions
         // incompatible with the original. By pre-hyphenating we avoid that.
+        let mut hyph_shaper = shaper::default_shaper();
         let h_nodes = hyphenate_nodes(
             &h_nodes,
             &self.language,
             &mut self.hyphenation,
-            &mut RustyBuzzShaper::new(),
+            hyph_shaper.as_mut(),
             &self.fonts,
         );
 
@@ -702,7 +703,7 @@ fn hyphenate_nodes(
     nodes: &[Node],
     lang: &str,
     dict: &mut HyphenationDictionary,
-    shaper: &mut RustyBuzzShaper,
+    shaper: &dyn Shaper,
     fonts: &std::collections::HashMap<String, RegisteredFont>,
 ) -> Vec<Node> {
     let mut result = Vec::with_capacity(nodes.len());

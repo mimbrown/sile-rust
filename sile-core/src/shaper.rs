@@ -201,36 +201,43 @@ fn parse_features(features_str: &str) -> Vec<rustybuzz::Feature> {
         .collect()
 }
 
-fn extract_glyph_texts(text: &str, infos: &[rustybuzz::GlyphInfo]) -> Vec<String> {
-    if infos.is_empty() {
+/// Map glyph cluster indices back to source text substrings.
+/// Works with any shaper that produces cluster values (byte offsets into `text`).
+pub(crate) fn extract_glyph_texts_from_clusters(text: &str, clusters: &[u32]) -> Vec<String> {
+    if clusters.is_empty() {
         return vec![];
     }
 
-    let mut clusters: Vec<u32> = infos.iter().map(|g| g.cluster).collect();
-    clusters.sort_unstable();
-    clusters.dedup();
+    let mut sorted = clusters.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
 
     let text_len = text.len() as u32;
-    let mut cluster_end = std::collections::HashMap::with_capacity(clusters.len());
-    for i in 0..clusters.len() {
-        let end = if i + 1 < clusters.len() {
-            clusters[i + 1]
+    let mut cluster_end = std::collections::HashMap::with_capacity(sorted.len());
+    for i in 0..sorted.len() {
+        let end = if i + 1 < sorted.len() {
+            sorted[i + 1]
         } else {
             text_len
         };
-        cluster_end.insert(clusters[i], end);
+        cluster_end.insert(sorted[i], end);
     }
 
-    infos
+    clusters
         .iter()
-        .map(|info| {
-            let start = info.cluster as usize;
-            let end = *cluster_end.get(&info.cluster).unwrap_or(&text_len) as usize;
+        .map(|&cluster| {
+            let start = cluster as usize;
+            let end = *cluster_end.get(&cluster).unwrap_or(&text_len) as usize;
             let end = end.min(text.len());
             let start = start.min(end);
             text[start..end].to_string()
         })
         .collect()
+}
+
+fn extract_glyph_texts(text: &str, infos: &[rustybuzz::GlyphInfo]) -> Vec<String> {
+    let clusters: Vec<u32> = infos.iter().map(|g| g.cluster).collect();
+    extract_glyph_texts_from_clusters(text, &clusters)
 }
 
 /// Apply tracking (letter-spacing) to shaped glyphs. Modifies `width` but
@@ -286,6 +293,27 @@ pub fn shape_with_fallbacks(
     let mut items = shaper.shape(text, primary_face, primary_spec);
     apply_fallbacks(shaper, &mut items, fallbacks);
     items
+}
+
+// ---------------------------------------------------------------------------
+// Shaper selection
+// ---------------------------------------------------------------------------
+
+/// Returns the default shaper for the current build configuration.
+///
+/// Without the `wasm` feature (the default), this returns a `HarfBuzzShaper`
+/// backed by the native C HarfBuzz library. With `--features wasm`, this
+/// returns a `RustyBuzzShaper` (pure Rust, WASM-compatible).
+pub fn default_shaper() -> Box<dyn Shaper> {
+    #[cfg(not(feature = "wasm"))]
+    {
+        Box::new(crate::shaper_harfbuzz::HarfBuzzShaper::new())
+    }
+
+    #[cfg(feature = "wasm")]
+    {
+        Box::new(RustyBuzzShaper::new())
+    }
 }
 
 // ---------------------------------------------------------------------------
