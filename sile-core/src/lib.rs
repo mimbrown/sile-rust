@@ -11,3 +11,8 @@ pub mod pagebuilder;
 pub mod pdf;
 pub mod shaper;
 pub mod svg;
+
+#[cfg(not(feature = "wasm"))]
+mod harfbuzz_ffi;
+#[cfg(not(feature = "wasm"))]
+pub mod shaper_harfbuzz;
