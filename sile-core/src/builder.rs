@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::color::Color;
-use crate::font::{FontDatabase, FontError, FontFace, FontSpec};
+use crate::font::{Direction, FontDatabase, FontError, FontFace, FontSpec};
 use crate::frame::{FrameConstraint, PageLayout, PaperSize};
 use crate::hyphenation::HyphenationDictionary;
 use crate::length::Length;
@@ -93,6 +93,7 @@ pub struct DocumentBuilder {
 
     // Style state
     current_color: Option<Color>,
+    direction: Direction,
 
     // Paragraph state
     paragraph_runs: Vec<TextRun>,
@@ -130,6 +131,7 @@ impl DocumentBuilder {
             hyphenation: HyphenationDictionary::new(),
             language: "en".to_string(),
             current_color: None,
+            direction: Direction::LTR,
             paragraph_runs: Vec::new(),
             paragraph_indent: 20.0,
             paragraph_skip: 0.0,
@@ -257,6 +259,11 @@ impl DocumentBuilder {
 
     pub fn set_leading(&mut self, leading: f64) -> &mut Self {
         self.leading = leading;
+        self
+    }
+
+    pub fn set_direction(&mut self, direction: Direction) -> &mut Self {
+        self.direction = direction;
         self
     }
 
@@ -462,34 +469,67 @@ impl DocumentBuilder {
             let face = Arc::clone(&font_entry.face);
             let spec = font_entry.spec.clone();
 
-            let space_width = self.shaper.measure_space(&face, &spec, &self.space_settings);
+            // Shape the entire run at once so the shaping engine can apply
+            // inter-word kerning (critical for nastaliq scripts where words
+            // overlap horizontally based on their vertical positions).
+            let all_glyphs = self.shaper.shape(&run.text, &face, &spec);
 
-            let words = split_words(&run.text);
-            for (i, word) in words.iter().enumerate() {
-                if word.is_empty() {
+            // Split shaped output into word NNodes and space glue by
+            // classifying each glyph as space or non-space via its cluster.
+            let mut segments: Vec<Node> = Vec::new();
+            let mut gi = 0;
+            while gi < all_glyphs.len() {
+                let cluster = all_glyphs[gi].cluster as usize;
+                let is_space = run.text.get(cluster..)
+                    .and_then(|s| s.chars().next())
+                    .is_some_and(|c| c.is_whitespace());
+
+                let seg_start = gi;
+                gi += 1;
+                while gi < all_glyphs.len() {
+                    let c = all_glyphs[gi].cluster as usize;
+                    let next_space = run.text.get(c..)
+                        .and_then(|s| s.chars().next())
+                        .is_some_and(|c| c.is_whitespace());
+                    if next_space != is_space {
+                        break;
+                    }
+                    gi += 1;
+                }
+
+                let seg_glyphs = &all_glyphs[seg_start..gi];
+
+                if is_space {
+                    let w: f64 = seg_glyphs.iter().map(|g| g.x_advance).sum::<f64>()
+                        * self.space_settings.enlargement_factor;
+                    let stretch = w * self.space_settings.stretch_factor;
+                    let shrink = w * self.space_settings.shrink_factor;
+                    segments.push(Node::glue(Length::new(
+                        Measurement::pt(w),
+                        Measurement::pt(stretch),
+                        Measurement::pt(shrink),
+                    )));
+                } else {
+                    let word = text_from_clusters(&run.text, seg_glyphs);
+                    let nnode = self.build_nnode(
+                        &word, seg_glyphs, &run.font_name, &spec, run.color,
+                    );
+                    segments.push(Node::NNode(nnode));
+                }
+            }
+
+            // For RTL runs the shaper returns glyphs in visual order
+            // (left-to-right); reverse to logical order so the linebreaker
+            // and build_lines (which reverses again) work consistently.
+            if spec.direction == Direction::RTL {
+                segments.reverse();
+            }
+
+            for node in segments {
+                if h_nodes.is_empty() && node.is_glue() {
                     continue;
                 }
-
-                if word.chars().all(|c| c.is_whitespace()) {
-                    // Emit glue for whitespace
-                    if !h_nodes.is_empty() {
-                        h_nodes.push(Node::glue(space_width));
-                    }
-                    continue;
-                }
-
-                // Emit glue before word (if not first in paragraph)
-                if i > 0 && !h_nodes.is_empty() {
-                    // Check if previous was already glue
-                    if !h_nodes.last().is_some_and(|n| n.is_glue()) {
-                        h_nodes.push(Node::glue(space_width));
-                    }
-                }
-
-                // Shape the word
-                let glyphs = self.shaper.shape(word, &face, &spec);
-                let nnode = self.build_nnode(word, &glyphs, &run.font_name, &spec, run.color);
-                h_nodes.push(Node::NNode(nnode));
+                h_nodes.push(node);
             }
         }
 
@@ -523,7 +563,7 @@ impl DocumentBuilder {
         );
 
         // Package lines into VBoxes
-        let v_nodes = self.build_lines(&h_nodes, &breaks, hsize);
+        let v_nodes = self.build_lines(&h_nodes, &breaks, hsize, self.direction);
         Ok(v_nodes)
     }
 
@@ -564,6 +604,7 @@ impl DocumentBuilder {
         h_nodes: &[Node],
         breaks: &[BreakResult],
         hsize: f64,
+        direction: Direction,
     ) -> Vec<Node> {
         let mut v_nodes = Vec::new();
         let mut start = 0;
@@ -573,8 +614,8 @@ impl DocumentBuilder {
             let end = br.position.min(h_nodes.len());
             let mut line_nodes: Vec<Node> = Vec::new();
 
-            // Left indent
-            if br.left > 0.0 {
+            // Left indent (LTR only; RTL handles alignment below)
+            if br.left > 0.0 && direction == Direction::LTR {
                 line_nodes.push(Node::hbox(br.left, 0.0, 0.0));
             }
 
@@ -585,6 +626,10 @@ impl DocumentBuilder {
                     continue;
                 }
                 started = true;
+                // Skip hfillglue — we handle alignment explicitly
+                if matches!(node, Node::HFillGlue(_)) {
+                    continue;
+                }
                 line_nodes.push(node.clone());
             }
 
@@ -599,9 +644,24 @@ impl DocumentBuilder {
                     line_nodes.extend(d.prebreak.clone());
                 }
 
-            // Right indent
-            if br.right > 0.0 {
+            // Right indent (LTR only)
+            if br.right > 0.0 && direction == Direction::LTR {
                 line_nodes.push(Node::hbox(br.right, 0.0, 0.0));
+            }
+
+            // For RTL paragraphs, reverse node order so the first word
+            // in logical order appears at the right edge, then right-align
+            // by prepending padding for the remaining space.
+            if direction == Direction::RTL {
+                line_nodes.reverse();
+                let content_width: f64 = line_nodes
+                    .iter()
+                    .map(|n| n.width().length.to_pt().unwrap_or(0.0))
+                    .sum();
+                let slack = hsize - content_width;
+                if slack > 0.5 {
+                    line_nodes.insert(0, Node::hbox(slack, 0.0, 0.0));
+                }
             }
 
             // Compute line dimensions
@@ -664,9 +724,26 @@ impl DocumentBuilder {
 }
 
 // ---------------------------------------------------------------------------
+// Cluster-based text extraction
+// ---------------------------------------------------------------------------
+
+fn text_from_clusters(text: &str, glyphs: &[GlyphItem]) -> String {
+    if glyphs.is_empty() {
+        return String::new();
+    }
+    let min = glyphs.iter().map(|g| g.cluster as usize).min().unwrap();
+    let max = glyphs.iter().map(|g| g.cluster as usize).max().unwrap();
+    let end = text.get(max..)
+        .and_then(|s| s.char_indices().nth(1).map(|(i, _)| max + i))
+        .unwrap_or(text.len());
+    text.get(min..end).unwrap_or("").to_string()
+}
+
+// ---------------------------------------------------------------------------
 // Word splitting
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
 fn split_words(text: &str) -> Vec<&str> {
     let mut words = Vec::new();
     let mut start = 0;
