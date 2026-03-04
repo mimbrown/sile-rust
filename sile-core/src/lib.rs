@@ -7,5 +7,6 @@ pub mod linebreak;
 pub mod measurement;
 pub mod node;
 pub mod pagebuilder;
+pub mod pdf;
 pub mod shaper;
 pub mod svg;

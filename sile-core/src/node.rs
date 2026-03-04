@@ -24,11 +24,24 @@
 //! - `vbox`               → [`VBox`]
 //! - `migrating`          → [`Migrating`]
 
+use crate::color::Color;
 use crate::length::Length;
 use crate::measurement::Measurement;
 
 /// Infinity value used for fill glues (matches the Lua `1e13`).
 pub const INFINITY: f64 = 1e13;
+
+// ─── GlyphData ────────────────────────────────────────────────────────────────
+
+/// Positioned glyph data from the shaping pipeline, used by PDF/rendering output.
+#[derive(Debug, Clone, Default)]
+pub struct GlyphData {
+    pub gid: u16,
+    pub x_advance: f64,
+    pub y_advance: f64,
+    pub x_offset: f64,
+    pub y_offset: f64,
+}
 
 // ─── Helper functions (mirrors _maxnode / SU.sum) ────────────────────────────
 
@@ -381,6 +394,14 @@ pub struct NNode {
     /// The shaped sub-boxes (typically [`Node::HBox`] glyph boxes).
     pub nodes: Vec<Node>,
     pub language: String,
+    /// Font registry key for PDF rendering (empty if not set).
+    pub font_key: String,
+    /// Font size in points for PDF rendering.
+    pub font_size: f64,
+    /// Positioned glyphs from the shaper, used for PDF output.
+    pub glyphs: Vec<GlyphData>,
+    /// Optional color override for this text node.
+    pub color: Option<Color>,
 }
 
 impl NNode {
@@ -411,6 +432,36 @@ impl NNode {
             text: text.into(),
             nodes,
             language: String::new(),
+            font_key: String::new(),
+            font_size: 0.0,
+            glyphs: Vec::new(),
+            color: None,
+        }
+    }
+
+    /// Construct an NNode with glyph data for PDF rendering.
+    pub fn with_glyphs(
+        text: impl Into<String>,
+        glyphs: Vec<GlyphData>,
+        font_key: impl Into<String>,
+        font_size: f64,
+        width: f64,
+        height: f64,
+        depth: f64,
+    ) -> Self {
+        Self {
+            width: Length::pt(width),
+            height: Length::pt(height),
+            depth: Length::pt(depth),
+            misfit: false,
+            explicit: false,
+            text: text.into(),
+            nodes: Vec::new(),
+            language: String::new(),
+            font_key: font_key.into(),
+            font_size,
+            glyphs,
+            color: None,
         }
     }
 }
@@ -867,6 +918,19 @@ impl Node {
     /// Build a `vbox` from a list of nodes.
     pub fn vbox(nodes: Vec<Node>) -> Self {
         Node::VBox(VBox::new(nodes, Length::zero()))
+    }
+
+    /// Build an `nnode` with glyph data for PDF rendering.
+    pub fn nnode_with_glyphs(
+        text: impl Into<String>,
+        glyphs: Vec<GlyphData>,
+        font_key: impl Into<String>,
+        font_size: f64,
+        width: f64,
+        height: f64,
+        depth: f64,
+    ) -> Self {
+        Node::NNode(NNode::with_glyphs(text, glyphs, font_key, font_size, width, height, depth))
     }
 }
 
