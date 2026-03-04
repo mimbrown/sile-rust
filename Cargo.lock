@@ -430,6 +430,10 @@ dependencies = [
 [[package]]
 name = "sile-cli"
 version = "0.1.0"
+dependencies = [
+ "fontdb",
+ "sile-core",
+]
 
 [[package]]
 name = "sile-core"

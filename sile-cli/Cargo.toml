@@ -4,3 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+sile-core = { path = "../sile-core" }
+fontdb = "0.22"

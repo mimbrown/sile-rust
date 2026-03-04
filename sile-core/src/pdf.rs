@@ -557,6 +557,7 @@ impl PdfOutputter {
                         descriptor: alloc.bump(),
                         font_file: alloc.bump(),
                         tounicode: alloc.bump(),
+                        cid_to_gid_map: alloc.bump(),
                     },
                 )
             })
@@ -731,6 +732,7 @@ struct FontRefs {
     descriptor: Ref,
     font_file: Ref,
     tounicode: Ref,
+    cid_to_gid_map: Ref,
 }
 
 // ---------------------------------------------------------------------------
@@ -746,18 +748,22 @@ fn write_font(
     let (raw_data, face_index) = entry.face.raw_data();
     let base_name = format!("SILE+Font{}", entry.pdf_name);
 
-    // Try subsetting
+    // Try subsetting — get both the subsetted data and the GID remapping
     let gids: Vec<u16> = entry.used_glyphs.iter().copied().collect();
-    let font_data = if !gids.is_empty() {
-        try_subset(raw_data, face_index, &gids).unwrap_or_else(|| raw_data.to_vec())
+    let subset_result = if !gids.is_empty() {
+        try_subset(raw_data, face_index, &gids)
     } else {
-        raw_data.to_vec()
+        None
+    };
+    let (font_data, gid_map) = match &subset_result {
+        Some(result) => (result.data.as_slice(), Some(&result.gid_map)),
+        None => (raw_data, None),
     };
 
     let font_bytes = if compress {
-        compress_data(&font_data)
+        compress_data(font_data)
     } else {
-        font_data.clone()
+        font_data.to_vec()
     };
 
     // Type0 font (composite)
@@ -778,10 +784,20 @@ fn write_font(
         supplement: 0,
     });
     cid.font_descriptor(refs.descriptor);
-    cid.cid_to_gid_map_predefined(Name(b"Identity"));
+
+    // When we subset, GIDs in the font change. The content stream still uses
+    // original GIDs as character codes. We write a CIDToGIDMap stream that
+    // translates original GIDs (used as CIDs) → new GIDs in the subset font.
+    // Without subsetting, Identity works (CID = GID).
+    if gid_map.is_some() {
+        cid.cid_to_gid_map_stream(refs.cid_to_gid_map);
+    } else {
+        cid.cid_to_gid_map_predefined(Name(b"Identity"));
+    }
     cid.default_width(1000.0);
 
-    // W (width) array
+    // W (width) array — widths are indexed by CID (= original GID) since
+    // that's what the content stream uses as character codes
     if !entry.used_glyphs.is_empty() {
         let units_per_em = entry.face.units_per_em();
         let mut widths = cid.widths();
@@ -819,6 +835,30 @@ fn write_font(
     stream.pair(Name(b"Length1"), font_data.len() as i32);
     stream.finish();
 
+    // CIDToGIDMap stream (only when subsetted)
+    if let Some(map) = gid_map {
+        let max_cid = entry.used_glyphs.iter().copied().max().unwrap_or(0) as usize;
+        // Binary array: 2 bytes per CID, big-endian, from CID 0 to max_cid
+        let mut cid_to_gid_data = vec![0u8; (max_cid + 1) * 2];
+        for (&old_gid, &new_gid) in map {
+            let idx = old_gid as usize * 2;
+            if idx + 1 < cid_to_gid_data.len() {
+                cid_to_gid_data[idx] = (new_gid >> 8) as u8;
+                cid_to_gid_data[idx + 1] = (new_gid & 0xFF) as u8;
+            }
+        }
+        let map_bytes = if compress {
+            compress_data(&cid_to_gid_data)
+        } else {
+            cid_to_gid_data
+        };
+        let mut map_stream = pdf.stream(refs.cid_to_gid_map, &map_bytes);
+        if compress {
+            map_stream.filter(Filter::FlateDecode);
+        }
+        map_stream.finish();
+    }
+
     // ToUnicode CMap
     let cmap_data = build_tounicode_cmap(&entry.gid_to_unicode);
     let cmap_bytes = if compress {
@@ -835,9 +875,24 @@ fn write_font(
     Ok(())
 }
 
-fn try_subset(data: &[u8], _face_index: u32, gids: &[u16]) -> Option<Vec<u8>> {
+struct SubsetResult {
+    data: Vec<u8>,
+    gid_map: HashMap<u16, u16>, // old GID → new GID
+}
+
+fn try_subset(data: &[u8], _face_index: u32, gids: &[u16]) -> Option<SubsetResult> {
     let mapper = subsetter::GlyphRemapper::new_from_glyphs(gids);
-    subsetter::subset(data, 0, &mapper).ok()
+    let subset_data = subsetter::subset(data, 0, &mapper).ok()?;
+    let mut gid_map = HashMap::new();
+    for &old_gid in gids {
+        if let Some(new_gid) = mapper.get(old_gid) {
+            gid_map.insert(old_gid, new_gid);
+        }
+    }
+    Some(SubsetResult {
+        data: subset_data,
+        gid_map,
+    })
 }
 
 // ---------------------------------------------------------------------------
